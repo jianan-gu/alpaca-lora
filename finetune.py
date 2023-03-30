@@ -32,7 +32,7 @@ def train(
     output_dir: str = "./lora-alpaca",
     # training hyperparams
     batch_size: int = 128,
-    micro_batch_size: int = 4,
+    micro_batch_size: int = 16,
     num_epochs: int = 3,
     learning_rate: float = 3e-4,
     cutoff_len: int = 256,
@@ -90,9 +90,12 @@ def train(
 
     device_map = "auto"
     world_size = int(os.environ.get("WORLD_SIZE", 1))
-    ddp = world_size != 1
+    ddp = int(os.environ.get("LOCAL_RANK", -1)) != 1
+#    ddp = world_size != 1
+    print("gjn using ddp?")
+    print(ddp)
     if ddp:
-        device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
+#        device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
         gradient_accumulation_steps = gradient_accumulation_steps // world_size
 
     # Check if parameter passed or if set within environ
@@ -109,9 +112,6 @@ def train(
 
     model = LlamaForCausalLM.from_pretrained(
         base_model,
-        load_in_8bit=True,
-        torch_dtype=torch.float16,
-        device_map=device_map,
     )
 
     tokenizer = LlamaTokenizer.from_pretrained(base_model)
@@ -165,7 +165,6 @@ def train(
         return tokenized_full_prompt
 
     model = prepare_model_for_int8_training(model)
-
     config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
@@ -232,7 +231,7 @@ def train(
             warmup_steps=100,
             num_train_epochs=num_epochs,
             learning_rate=learning_rate,
-            fp16=True,
+            bf16=True,
             logging_steps=10,
             optim="adamw_torch",
             evaluation_strategy="steps" if val_set_size > 0 else "no",
@@ -246,6 +245,9 @@ def train(
             group_by_length=group_by_length,
             report_to="wandb" if use_wandb else None,
             run_name=wandb_run_name if use_wandb else None,
+            xpu_backend="ccl",
+            no_cuda=True,
+            use_ipex=True,
         ),
         data_collator=transformers.DataCollatorForSeq2Seq(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
